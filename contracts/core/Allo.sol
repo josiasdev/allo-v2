@@ -9,12 +9,19 @@ import "openzeppelin-contracts-upgradeable/contracts/access/AccessControlUpgrade
 import "openzeppelin-contracts-upgradeable/contracts/security/ReentrancyGuardUpgradeable.sol";
 // Interfaces
 import "./interfaces/IAllo.sol";
+import {IFeeStrategy} from "./interfaces/IFeeStrategy.sol";
+import {IStrategyFactory} from "./interfaces/IStrategyFactory.sol";
 
 // Internal Libraries
-import {Clone} from "./libraries/Clone.sol";
 import {Errors} from "./libraries/Errors.sol";
 import "./libraries/Native.sol";
 import {Transfer} from "./libraries/Transfer.sol";
+
+// Fee Strategies (Strategy pattern)
+import {FlatFeeStrategy} from "./fees/FlatFeeStrategy.sol";
+
+// Strategy Factory (Factory Method pattern)
+import {StrategyFactory} from "./StrategyFactory.sol";
 
 // ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣾⣿⣷⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣼⣿⣿⣷⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⣿⣗⠀⠀⠀⢸⣿⣿⣿⡯⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
 // ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣿⣿⣿⣿⣷⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣼⣿⣿⣿⣿⣿⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⣿⣗⠀⠀⠀⢸⣿⣿⣿⡯⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
@@ -72,7 +79,9 @@ contract Allo is
     IRegistry private registry;
 
     /// @notice Maps the `msg.sender` to a `nonce` to prevent duplicates
-    /// @dev 'msg.sender' -> 'nonce' for cloning strategies
+    /// @dev Deprecated: nonce management for strategy cloning was moved to the 'StrategyFactory'
+    ///      (Factory Method pattern). This variable is kept in place to preserve the storage
+    ///      layout of this upgradeable contract.
     mapping(address => uint256) private _nonces;
 
     /// @notice Maps the pool ID to the pool details
@@ -82,6 +91,19 @@ contract Allo is
     /// @notice Returns a bool for whether a strategy is cloneable or not using the strategy address as the key
     /// @dev Strategy.address -> bool
     mapping(address => bool) private cloneableStrategies;
+
+    /// @notice The strategy used to calculate the fee charged when a pool is funded
+    /// @dev Strategy pattern (GoF Behavioral): the fee calculation algorithm is encapsulated
+    ///      behind the 'IFeeStrategy' abstraction so it can be swapped without changing this contract.
+    ///      Appended at the end of the storage variables to preserve the storage layout.
+    IFeeStrategy private feeStrategy;
+
+    /// @notice The factory used to instantiate strategies when creating pools
+    /// @dev Factory Method pattern (GoF Creational): the strategy instantiation logic is
+    ///      encapsulated behind the 'IStrategyFactory' abstraction so it can be swapped without
+    ///      changing this contract. Appended at the end of the storage variables to preserve
+    ///      the storage layout.
+    IStrategyFactory private strategyFactory;
 
     // ====================================
     // =========== Initializer =============
@@ -115,6 +137,12 @@ contract Allo is
 
         // Set the base fee
         _updateBaseFee(_baseFee);
+
+        // Inject the default fee strategy ('FlatFeeStrategy') configured with the given fee percentage
+        _deployDefaultFeeStrategy(_percentFee);
+
+        // Inject the default strategy factory ('StrategyFactory')
+        _updateStrategyFactory(address(new StrategyFactory()));
     }
 
     // ====================================
@@ -197,10 +225,10 @@ contract Allo is
             revert NOT_APPROVED_STRATEGY();
         }
 
-        // Returns the created pool ID
+        // Delegate the strategy instantiation to the injected strategy factory (Factory Method pattern)
         return _createPool(
             _profileId,
-            IStrategy(Clone.createClone(_strategy, _nonces[msg.sender]++)),
+            strategyFactory.createStrategyClone(_strategy),
             _initStrategyData,
             _token,
             _amount,
@@ -236,9 +264,29 @@ contract Allo is
 
     /// @notice Updates the fee percentage.
     /// @dev Use this to update the fee percentage. 'msg.sender' must be Allo owner.
+    ///      Re-deploys the default 'FlatFeeStrategy' so the injected fee strategy stays in sync
+    ///      with the updated percentage. If a custom fee strategy was installed via
+    ///      'updateFeeStrategy()', install it again afterwards.
     /// @param _percentFee The new fee
     function updatePercentFee(uint256 _percentFee) external onlyOwner {
         _updatePercentFee(_percentFee);
+
+        // Keep the default fee strategy in sync with the new fee percentage
+        _deployDefaultFeeStrategy(_percentFee);
+    }
+
+    /// @notice Updates the fee strategy used to calculate fees when funding pools.
+    /// @dev Use this to swap the fee calculation algorithm at runtime. 'msg.sender' must be Allo owner.
+    /// @param _feeStrategy The address of the new fee strategy, must implement 'IFeeStrategy'
+    function updateFeeStrategy(address _feeStrategy) external onlyOwner {
+        _updateFeeStrategy(_feeStrategy);
+    }
+
+    /// @notice Updates the strategy factory used to instantiate strategies when creating pools.
+    /// @dev Use this to swap the strategy instantiation logic at runtime. 'msg.sender' must be Allo owner.
+    /// @param _strategyFactory The address of the new strategy factory, must implement 'IStrategyFactory'
+    function updateStrategyFactory(address _strategyFactory) external onlyOwner {
+        _updateStrategyFactory(_strategyFactory);
     }
 
     /// @notice Updates the base fee.
@@ -511,19 +559,22 @@ contract Allo is
 
     /// @notice Fund a pool.
     /// @dev Deducts the fee and transfers the amount to the distribution strategy.
+    ///      The fee is calculated by the injected fee strategy ('IFeeStrategy') instead of being
+    ///      computed inline, keeping the fee calculation decoupled from this contract.
     ///      Emits a 'PoolFunded' event.
     /// @param _amount The amount to transfer
     /// @param _poolId The 'poolId' for the pool you are funding
     /// @param _strategy The address of the strategy
     function _fundPool(uint256 _amount, uint256 _poolId, IStrategy _strategy) internal {
-        uint256 feeAmount;
         uint256 amountAfterFee = _amount;
 
         Pool storage pool = pools[_poolId];
         address _token = pool.token;
 
-        if (percentFee > 0) {
-            feeAmount = (_amount * percentFee) / getFeeDenominator();
+        // Delegate the fee calculation to the injected fee strategy
+        uint256 feeAmount = feeStrategy.calculateFee(_amount);
+
+        if (feeAmount > 0) {
             amountAfterFee -= feeAmount;
 
             if (feeAmount + amountAfterFee != _amount) revert INVALID();
@@ -629,6 +680,38 @@ contract Allo is
         emit BaseFeeUpdated(baseFee);
     }
 
+    /// @notice Deploys a new default fee strategy
+    /// @dev Internal function used to deploy the default 'FlatFeeStrategy' configured with
+    ///      the given fee percentage and inject it into this contract.
+    /// @param _percentFee The fee percentage the strategy should apply
+    function _deployDefaultFeeStrategy(uint256 _percentFee) internal {
+        _updateFeeStrategy(address(new FlatFeeStrategy(_percentFee)));
+    }
+
+    /// @notice Updates the fee strategy
+    /// @dev Internal function used to inject a new fee strategy into this contract.
+    ///      Emits a FeeStrategyUpdated event.
+    /// @param _feeStrategy The address of the new fee strategy
+    function _updateFeeStrategy(address _feeStrategy) internal {
+        if (_feeStrategy == address(0)) revert ZERO_ADDRESS();
+
+        feeStrategy = IFeeStrategy(_feeStrategy);
+
+        emit FeeStrategyUpdated(_feeStrategy);
+    }
+
+    /// @notice Updates the strategy factory
+    /// @dev Internal function used to inject a new strategy factory into this contract.
+    ///      Emits a StrategyFactoryUpdated event.
+    /// @param _strategyFactory The address of the new strategy factory
+    function _updateStrategyFactory(address _strategyFactory) internal {
+        if (_strategyFactory == address(0)) revert ZERO_ADDRESS();
+
+        strategyFactory = IStrategyFactory(_strategyFactory);
+
+        emit StrategyFactoryUpdated(_strategyFactory);
+    }
+
     // =========================
     // ==== View Functions =====
     // =========================
@@ -672,6 +755,18 @@ contract Allo is
     /// @return The base fee
     function getBaseFee() external view returns (uint256) {
         return baseFee;
+    }
+
+    /// @notice Getter for the fee strategy.
+    /// @return The address of the fee strategy used to calculate fees
+    function getFeeStrategy() external view returns (IFeeStrategy) {
+        return feeStrategy;
+    }
+
+    /// @notice Getter for the strategy factory.
+    /// @return The address of the strategy factory used to instantiate strategies
+    function getStrategyFactory() external view returns (IStrategyFactory) {
+        return strategyFactory;
     }
 
     /// @notice Getter for treasury address.

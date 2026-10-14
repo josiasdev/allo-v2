@@ -1,9 +1,74 @@
+# Trabalho 1 - Refatoração com Padrões de Projeto em Sistema Legado (GoF)
+
+**Disciplina:** QXD0068 - Reuso de Software (UFC Quixadá)  
+**Integrantes:** Francisco Josias da Silva Batista  
+**Professor:** Prof. Francisco Victor da Silva Pinheiro  
+**Data de Entrega:** 14/10/2026
+
+## Descrição do Projeto
+Este repositório é um *fork* do **Allo Protocol V2** (da Gitcoin), um protocolo open-source focado na alocação e distribuição descentralizada de fundos na rede Ethereum. 
+
+O objetivo deste fork é estritamente acadêmico: aplicar padrões de projeto estruturais e comportamentais do **GoF (Gang of Four)** em contratos inteligentes escritos em Solidity. As refatorações visam reduzir o acoplamento, melhorar a coesão das estruturas de dados e facilitar a manutenção do protocolo original, validando os conceitos ensinados na disciplina.
+
+Os padrões aplicados foram:
+- **Facade:** Simplificação da interação do usuário com `Registry` e `Allo` através do `AlloStarterFacade.sol`.
+- **Strategy:** Desacoplamento da lógica de taxas (fees) do contrato principal.
+- **Factory Method:** Delegação da instanciação de novas estratégias (`StrategyFactory.sol`).
+- **State:** Gerenciamento dos estados das pools e alocações (`BaseStrategy.sol`).
+
+## Instruções de Execução
+
+Este projeto utiliza o framework **Foundry** para compilação e testes.
+
+1. **Pré-requisitos:** Instale o Foundry (https://getfoundry.sh/).
+2. **Instalar dependências:**
+   ```bash
+   forge install
+   ```
+3. Compilar os contratos:
+   ```bash
+   forge build
+   ```
+4. Executar a suíte de testes:
+   ```bash
+   forge test
+   ```
+
+## Materiais Complementares
+
+Para uma visão detalhada das mudanças, diagramas e defesa arquitetural deste projeto, consulte os arquivos disponíveis na raiz deste repositório:
+
+- **[Relatório Técnico Completo](./Relatorio_Refatoracao_Allo.pdf):** Diagnóstico do sistema legado, análises aprofundadas de "Antes vs. Depois", diagramas de classe e fluxo.
+- **[Slides da Apresentação](./Apresentacao_Allo_Protocol.pdf):** Resumo executivo dos problemas identificados e padrões aplicados (material utilizado na apresentação em sala de aula).
+
+## Estrutura das Refatorações
+
+Os principais arquivos modificados e criados durante o trabalho encontram-se em `contracts/core/`:
+* `AlloStarterFacade.sol` (Novo)
+* `interfaces/IFeeStrategy.sol` e `FlatFeeStrategy.sol` (Novo)
+* `StrategyFactory.sol` (Novo)
+* `Allo.sol` (Refatorado)
+* `BaseStrategy.sol` / `DirectGrantsLite.sol` (Refatorado com padrões de Estado)
+
+## Validação e Testes
+
+A refatoração preservou o comportamento externo do protocolo. Toda a suíte de testes legada foi executada com sucesso usando o Foundry:
+- **Testes executados e aprovados:** 1.147
+- **Taxa de sucesso arquitetural:** 100%
+
+
 # Allo Protocol
 
 The Allo Protocol introduces a sophisticated ecosystem on the Ethereum blockchain, enabling automated and decentralized fund allocation and distribution. The protocol comprises a set of smart contracts that collectively offer an advanced framework for fund management, fee handling, and governance. The technical architecture and interactions within the protocol are explained below.
 
 ## Table of Contents
 
+- [Trabalho 1 - Refatoração com Padrões de Projeto em Sistema Legado (GoF)](#trabalho-1---refatoração-com-padrões-de-projeto-em-sistema-legado-gof)
+  - [Descrição do Projeto](#descrição-do-projeto)
+  - [Instruções de Execução](#instruções-de-execução)
+  - [Materiais Complementares](#materiais-complementares)
+  - [Estrutura das Refatorações](#estrutura-das-refatorações)
+  - [Validação e Testes](#validação-e-testes)
 - [Allo Protocol](#allo-protocol)
   - [Table of Contents](#table-of-contents)
   - [Diagram](#diagram)

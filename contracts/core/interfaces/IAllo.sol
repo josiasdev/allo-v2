@@ -4,6 +4,8 @@ pragma solidity ^0.8.19;
 // Interfaces
 import {IRegistry} from "./IRegistry.sol";
 import {IStrategy} from "./IStrategy.sol";
+import {IFeeStrategy} from "./IFeeStrategy.sol";
+import {IStrategyFactory} from "./IStrategyFactory.sol";
 // Internal Libraries
 import {Metadata} from "../libraries/Metadata.sol";
 
@@ -87,6 +89,14 @@ interface IAllo {
     /// @notice Emitted when the base fee is updated
     /// @param baseFee New base fee amount
     event BaseFeeUpdated(uint256 baseFee);
+
+    /// @notice Emitted when the fee strategy is updated
+    /// @param feeStrategy Address of the new fee strategy
+    event FeeStrategyUpdated(address feeStrategy);
+
+    /// @notice Emitted when the strategy factory is updated
+    /// @param strategyFactory Address of the new strategy factory
+    event StrategyFactoryUpdated(address strategyFactory);
 
     /// @notice Emitted when the registry address is updated
     /// @param registry Address of the new registry
@@ -188,6 +198,16 @@ interface IAllo {
     /// @param _baseFee The new base fee
     function updateBaseFee(uint256 _baseFee) external;
 
+    /// @notice Updates the fee strategy used to calculate fees when funding pools.
+    /// @dev 'msg.sender' must be the Allo contract owner.
+    /// @param _feeStrategy The address of the new fee strategy, must implement IFeeStrategy
+    function updateFeeStrategy(address _feeStrategy) external;
+
+    /// @notice Updates the strategy factory used to instantiate strategies when creating pools.
+    /// @dev 'msg.sender' must be the Allo contract owner.
+    /// @param _strategyFactory The address of the new strategy factory, must implement IStrategyFactory
+    function updateStrategyFactory(address _strategyFactory) external;
+
     /// @notice Adds a strategy to the cloneable strategies.
     /// @dev 'msg.sender' must be the Allo contract owner.
     /// @param _strategy The address of the strategy to add
@@ -284,6 +304,14 @@ interface IAllo {
     /// @notice Returns the current base fee
     /// @return baseFee The current base fee
     function getBaseFee() external view returns (uint256);
+
+    /// @notice Returns the current fee strategy
+    /// @return The address of the fee strategy used to calculate fees
+    function getFeeStrategy() external view returns (IFeeStrategy);
+
+    /// @notice Returns the current strategy factory
+    /// @return The address of the strategy factory used to instantiate strategies
+    function getStrategyFactory() external view returns (IStrategyFactory);
 
     /// @notice Returns the current treasury address
     /// @return treasury The current treasury address

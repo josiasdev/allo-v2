@@ -50,6 +50,7 @@ sequenceDiagram
 - **External Libraries:** Utilizes the `Multicall` library from OpenZeppelin.
 - **Interfaces:** Interfaces with the `IAllo` and `IRegistry` components for external communication.
 - **Inheritance:** Inherits from the `Native`, `BaseStrategy` and `Multicall` contracts, inheriting and expanding core strategy functionalities.
+- **State Pattern:** The pool lifecycle is modeled with the GoF State pattern. The strategy (Context) resolves the current lifecycle state lazily from the registration timestamps on every call and delegates the registration, allocation and distribution checks to the active state object (`RegistrationOpenState` / `RegistrationClosedState`, both extending the abstract `LifecycleState`). The state objects are stateless and deployed once in the constructor as immutables.
 
 ### Structs and Enums
 
@@ -60,11 +61,12 @@ sequenceDiagram
 
 ### Constructor
 
-The constructor initializes the strategy by accepting the address of the `IAllo` contract and a name.
+The constructor initializes the strategy by accepting the address of the `IAllo` contract and a name. It also deploys the stateless lifecycle state objects (`RegistrationOpenState` and `RegistrationClosedState`) and stores them as immutables.
 
 ### Views and Queries
 
 1. `getRecipient`: Retrieves recipient details using their ID.
+2. `currentState`: Returns the current lifecycle state (`RegistrationOpen` / `RegistrationClosed`) resolved from the registration timestamps.
 
 ### External/Custom Functions
 
@@ -75,13 +77,13 @@ The constructor initializes the strategy by accepting the address of the `IAllo`
 
 ### Internal Functions
 
-1. `_checkOnlyActiveRegistration`: Checks if the registration is active and reverts if not.
+1. `_currentState`: Resolves the current lifecycle state object from the registration timestamps (State pattern).
 2. `_isValidAllocator`: Validates an address is a pool manager and therefore an eligible allocator.
 3. `_isPoolTimestampValid`: Validates the pool's timestamp configuration.
-4. `_isPoolActive`: Checks if the pool is active.
-5. `_registerRecipient`: Registers a recipient with validation and status updates.
-6. `_distribute`: Not used and reverts by default. Required by `BaseStrategy`.
-7. `_allocate`: Allocates tokens to recipients using provided data. Restricted to pool managers. Allocations to recipients can happen multiple times.
+4. `_isPoolActive`: Checks if the pool is active by delegating to the current lifecycle state.
+5. `_registerRecipient`: Registers a recipient with validation and status updates. Registration is gated by the current lifecycle state.
+6. `_distribute`: Not used and reverts by default (delegated to the lifecycle state). Required by `BaseStrategy`.
+7. `_allocate`: Allocates tokens to recipients using provided data. Restricted to pool managers. Allocations to recipients can happen multiple times. Validated by the current lifecycle state.
 8. `_isProfileMember`: Checks if the sender is a profile member (when using registry anchors).
 9. `_getRecipient`: Retrieves recipient details using their ID.
 10. `_getPayout_`: Not used and reverts by default. Required by `BaseStrategy`.

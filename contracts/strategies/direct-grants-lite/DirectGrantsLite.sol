@@ -7,6 +7,10 @@ import {Multicall} from "openzeppelin-contracts/contracts/utils/Multicall.sol";
 import {IRegistry} from "../../core/interfaces/IRegistry.sol";
 // Core Contracts
 import {BaseStrategy} from "../BaseStrategy.sol";
+// State Pattern Contracts
+import {LifecycleState} from "./states/LifecycleState.sol";
+import {RegistrationOpenState} from "./states/RegistrationOpenState.sol";
+import {RegistrationClosedState} from "./states/RegistrationClosedState.sol";
 // Internal Libraries
 import {Metadata} from "../../core/libraries/Metadata.sol";
 import {Native} from "../../core/libraries/Native.sol";
@@ -29,11 +33,13 @@ import {Native} from "../../core/libraries/Native.sol";
 /// @title Direct Grants Lite Strategy
 /// @author @thelostone-mc <aditya@gitcoin.co>, @0xKurt <kurt@gitcoin.co>, @codenamejason <jason@gitcoin.co>
 /// @notice Strategy for direct grants
+/// @dev The pool lifecycle is modeled with the State pattern: registration, allocation and
+///      distribution checks are delegated to the current 'LifecycleState', which is resolved
+///      lazily from the registration timestamps on every call.
 contract DirectGrantsLiteStrategy is Native, BaseStrategy, Multicall {
     /// ================================
     /// ========== Struct ==============
     /// ================================
-
     /// @notice Struct to hold details of the application status
     /// @dev Application status is stored in a bitmap. Each 4 bits represents the status of a recipient,
     /// defined as 'index' here. The first 4 bits of the 256 bits represent the status of the first recipient,
@@ -144,14 +150,23 @@ contract DirectGrantsLiteStrategy is Native, BaseStrategy, Multicall {
     /// @notice 'recipientId' => 'Recipient' struct.
     mapping(address => Recipient) internal _recipients;
 
+    /// @notice The state object used while the pool is inside its registration window.
+    /// @dev Deployed once in the constructor; stateless, so clones share it via the implementation code.
+    LifecycleState public immutable registrationOpenState;
+
+    /// @notice The state object used while the pool is outside its registration window.
+    /// @dev Deployed once in the constructor; stateless, so clones share it via the implementation code.
+    LifecycleState public immutable registrationClosedState;
+
     /// ================================
     /// ========== Modifier ============
     /// ================================
 
     /// @notice Modifier to check if the registration is active
-    /// @dev This will revert if the registration has not started or if the registration has ended.
+    /// @dev Delegates the validation to the current lifecycle state, which reverts with
+    ///      'REGISTRATION_NOT_ACTIVE' if the pool is outside its registration window.
     modifier onlyActiveRegistration() {
-        _checkOnlyActiveRegistration();
+        _currentState().checkRegistration();
         _;
     }
 
@@ -160,9 +175,13 @@ contract DirectGrantsLiteStrategy is Native, BaseStrategy, Multicall {
     /// ===============================
 
     /// @notice Constructor for the Direct Grants Lite Strategy
+    /// @dev Deploys the stateless lifecycle state objects (State pattern) and stores them as immutables.
     /// @param _allo The 'Allo' contract
     /// @param _name The name of the strategy
-    constructor(address _allo, string memory _name) BaseStrategy(_allo, _name) {}
+    constructor(address _allo, string memory _name) BaseStrategy(_allo, _name) {
+        registrationOpenState = new RegistrationOpenState();
+        registrationClosedState = new RegistrationClosedState();
+    }
 
     /// ===============================
     /// ========= Initialize ==========
@@ -224,6 +243,13 @@ contract DirectGrantsLiteStrategy is Native, BaseStrategy, Multicall {
     /// @return Status of the recipient
     function _getRecipientStatus(address _recipientId) internal view override returns (Status) {
         return Status(_getUintRecipientStatus(_recipientId));
+    }
+
+    /// @notice Returns the current lifecycle state of the pool (State pattern).
+    /// @dev The state is resolved lazily from the registration timestamps on every call.
+    /// @return The current 'LifecycleState.PoolState'
+    function currentState() external view returns (LifecycleState.PoolState) {
+        return _currentState().state();
     }
 
     /// ===============================
@@ -304,12 +330,16 @@ contract DirectGrantsLiteStrategy is Native, BaseStrategy, Multicall {
     /// ============ Internal ==============
     /// ====================================
 
-    /// @notice Checks if the registration is active and reverts if not.
-    /// @dev This will revert if the registration has not started or if the registration has ended.
-    function _checkOnlyActiveRegistration() internal view {
-        if (registrationStartTime > block.timestamp || block.timestamp > registrationEndTime) {
-            revert REGISTRATION_NOT_ACTIVE();
+    /// @notice Resolves the lifecycle state object for the current time (State pattern).
+    /// @dev Returns the 'RegistrationOpenState' while 'block.timestamp' is within
+    ///      '[registrationStartTime, registrationEndTime]', otherwise the 'RegistrationClosedState'.
+    ///      The state is resolved lazily so timestamp updates and the passage of time are always reflected.
+    /// @return The current lifecycle state object
+    function _currentState() internal view returns (LifecycleState) {
+        if (registrationStartTime <= block.timestamp && block.timestamp <= registrationEndTime) {
+            return registrationOpenState;
         }
+        return registrationClosedState;
     }
 
     /// @notice Checks if address is eligible allocator.
@@ -330,14 +360,11 @@ contract DirectGrantsLiteStrategy is Native, BaseStrategy, Multicall {
     }
 
     /// @notice Checks whether a pool is active or not.
-    /// @dev This will return true if the current 'block timestamp' is greater than or equal to the
-    /// 'registrationStartTime' and less than or equal to the 'registrationEndTime'.
+    /// @dev Delegates to the current lifecycle state, which reports the pool as active
+    ///      while the registration window is open.
     /// @return 'true' if pool is active, otherwise 'false'
     function _isPoolActive() internal view override returns (bool) {
-        if (registrationStartTime <= block.timestamp && block.timestamp <= registrationEndTime) {
-            return true;
-        }
-        return false;
+        return _currentState().isPoolActive();
     }
 
     /// @notice Submit recipient to pool and set their status.
@@ -423,16 +450,19 @@ contract DirectGrantsLiteStrategy is Native, BaseStrategy, Multicall {
     }
 
     /// @notice Distribute funds to recipients.
-    /// @dev This function reverts by default
+    /// @dev Delegates to the current lifecycle state, which always reverts with 'NOT_IMPLEMENTED'.
     function _distribute(address[] memory, bytes memory, address) internal virtual override {
-        revert NOT_IMPLEMENTED();
+        _currentState().checkDistribution();
     }
 
     /// @notice Allocate. Required by the 'BaseStrategy'.
+    /// @dev The lifecycle state validates that allocation is allowed before proceeding.
     /// @param _data The data to be decoded
     /// @custom:data '(Allocation[] allocations)'
     /// @param _sender The sender of the transaction
     function _allocate(bytes memory _data, address _sender) internal virtual override onlyPoolManager(_sender) {
+        _currentState().checkAllocation();
+
         uint256 nativeAmount = msg.value;
 
         // Decode the allocation data
